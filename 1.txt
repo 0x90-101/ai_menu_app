@@ -1,0 +1,6 @@
+Тип	Логин	Пароль
+Суперпользователь (админ)	admin@restaurant.com	admin123
+Повар	cook@restaurant.com	cook123         cook1@restaurant.com
+Обычный пользователь (пример)	test@example.com testpass123
+
+http://127.0.0.1:8000
