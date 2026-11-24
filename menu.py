@@ -7,6 +7,9 @@ from sqlalchemy import inspect, text
 from database import db
 
 
+# Приводит список строк к нормализованному виду: убирает пустые,
+# обрезает пробелы, приводит к нижнему регистру и сортирует.
+# Нужно, чтобы одинаковые фильтры давали одинаковый ключ кеша.
 def _normalize_list(items: Optional[List[str]]) -> Tuple[str, ...]:
     if not items:
         return tuple()
@@ -17,22 +20,31 @@ def _normalize_list(items: Optional[List[str]]) -> Tuple[str, ...]:
     return tuple(sorted(normalized))
 
 
+# Сервис меню: собирает данные о блюдах из БД с фильтрами и сортировкой,
+# держит in-memory кеш и следит за таблицей menu_items (флаги «хит»/«новинка»).
 class MenuService:
+    # Инициализация: задаёт TTL кеша, пустой кеш и создаёт таблицу menu_items,
+    # если её ещё нет.
     def __init__(self, cache_ttl_seconds: int = 120):
         self.cache_ttl = timedelta(seconds=cache_ttl_seconds)
         self.cache: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
         self._ensure_menu_table()
 
+    # Проверяет существование таблицы по её имени. При ошибке возвращает False.
     def _table_exists(self, table_name: str) -> bool:
         try:
             return table_name in inspect(db.engine).get_table_names()
         except Exception:
             return False
 
+    # Свойство: возвращает имя SQL-диалекта текущей БД (sqlite/postgresql и т.п.),
+    # чтобы строить запросы под конкретную СУБД.
     @property
     def _dialect(self) -> str:
         return db.engine.dialect.name
 
+    # Создаёт таблицу menu_items (id, dish_id, is_hit, is_new, updated_at)
+    # и индекс по dish_id. SQL отличается для SQLite и остальных СУБД.
     def _ensure_menu_table(self) -> None:
         if db.engine is None:
             return
@@ -67,6 +79,8 @@ class MenuService:
                 ON menu_items(dish_id)
             """))
 
+    # Возвращает максимальное значение updated_at из menu_items —
+    # по нему понимаем, когда меню менялось в последний раз (для инвалидации кеша).
     def _get_last_updated(self, conn) -> Optional[datetime]:
         result = conn.execute(text("SELECT MAX(updated_at) as updated_at FROM menu_items"))
         row = result.fetchone()
@@ -79,6 +93,8 @@ class MenuService:
                 return None
         return None
 
+    # Возвращает SQL-выражения для склейки тегов и ингредиентов в строку.
+    # Для SQLite используется GROUP_CONCAT, для остальных — STRING_AGG.
     def _get_selects(self) -> Dict[str, str]:
         if self._dialect == "sqlite":
             return {
@@ -91,6 +107,9 @@ class MenuService:
             "ingredients": "STRING_AGG(DISTINCT ing.name, ',')",
         }
 
+    # Главный SQL-запрос: достаёт доступные блюда с категорией, тегами,
+    # ингредиентами и флагами is_hit/is_new, применяет фильтры
+    # include_tags / exclude_allergens и сортировку sort_by.
     def _query_menu(
         self,
         conn,
@@ -175,6 +194,7 @@ class MenuService:
             tags = []
             ingredients = []
 
+            # Склеенные через запятую строки разбиваем обратно в списки
             if row.tags:
                 tags = [tag.strip() for tag in str(row.tags).split(',') if tag.strip()]
             if row.ingredients:
@@ -192,6 +212,10 @@ class MenuService:
 
         return items
 
+    # Возвращает компактное меню с фильтрами и сортировкой.
+    # Проверяет лимит и допустимые sort_by, нормализует фильтры,
+    # смотрит кеш и, если он не протух и меню не менялось — отдаёт из кеша,
+    # иначе делает запрос и обновляет кеш.
     def get_compact_menu(
         self,
         include_tags: Optional[List[str]] = None,
@@ -216,6 +240,7 @@ class MenuService:
         with db.engine.connect() as conn:
             last_updated = self._get_last_updated(conn)
 
+            # Кеш валиден, если не истёк по TTL и меню не менялось
             if cached and cached["expires_at"] > now and cached["last_updated"] == last_updated:
                 return cached["data"]
 
@@ -236,8 +261,10 @@ class MenuService:
             return items
 
 
+# Готовый экземпляр сервиса для использования роутером
 menu_service = MenuService()
 
+# Роутер меню, все пути с префиксом /menu
 menu_router = APIRouter(
     prefix="/menu",
     tags=["Меню"],
@@ -245,6 +272,10 @@ menu_router = APIRouter(
 )
 
 
+# Эндпоинт /menu/compact: принимает фильтры из query-параметров
+# (tag, exclude_allergen, limit, sort_by), зовёт сервис и возвращает
+# список блюд вместе с применёнными фильтрами.
+# ValueError → 400, любая другая ошибка → 500.
 @menu_router.get("/compact", summary="Компактный список блюд")
 async def get_compact_menu(
     tags: Optional[List[str]] = Query(None, alias="tag"),
