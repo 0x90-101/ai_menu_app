@@ -4,6 +4,7 @@ from datetime import datetime
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+# Роутер для мобильного приложения, все пути с префиксом /mobile
 mobile_router = APIRouter(
     prefix="/mobile",
     tags=["Мобильное приложение"],
@@ -11,34 +12,46 @@ mobile_router = APIRouter(
 )
 
 
+# Данные гостя при регистрации: категория, аллергии, ограничения, предпочтения,
+# номер стола и опциональная дата рождения
 class GuestData(BaseModel):
     category: str
     allergies: List[str] = []
     restrictions: List[str] = []
     preferences: List[str] = []
     table_number: int
-    birth_date: Optional[str] = None  # Добавляем дату рождения (формат YYYY-MM-DD)
+    birth_date: Optional[str] = None  # формат YYYY-MM-DD
 
 
+# Тело запроса на обновление заказа: id заказа и списки id блюд/напитков
 class OrderUpdate(BaseModel):
     order_id: int
     dish_ids: Optional[List[int]] = None
     bar_item_ids: Optional[List[int]] = None
 
 
+# Обработчик мобильных гостей: работает с SQLite напрямую через sqlite3.
+# Открывает/закрывает соединение на каждый вызов.
 class MobileGuestHandler:
+    # Сохраняет путь к БД и обнуляет соединение
     def __init__(self, db_path: str = "restaurant.db"):
         self.db_path = db_path
         self.conn = None
 
+    # Открывает соединение с SQLite и включает доступ по имени колонок (Row)
     def connect(self):
         self.conn = sqlite3.connect(self.db_path)
         self.conn.row_factory = sqlite3.Row
 
+    # Закрывает соединение, если оно открыто
     def disconnect(self):
         if self.conn:
             self.conn.close()
 
+    # Регистрирует гостя: проверяет существование стола, создаёт пользователя
+    # с логином guest_<дата_время>, сохраняет аллергии/ограничения и дату рождения,
+    # затем создаёт пустой заказ со статусом «новый».
+    # Возвращает словарь с success, user_id, order_id и данными гостя.
     def create_guest_user(self,
                           category: str,
                           allergies: List[str],
@@ -112,6 +125,9 @@ class MobileGuestHandler:
         finally:
             self.disconnect()
 
+    # Возвращает всех гостей за указанным столом: данные пользователя
+    # плюс связанные поля заказа (created_at, status, order_id, total_price).
+    # Сортирует по времени создания заказа по убыванию.
     def get_guest_by_table(self, table_number: int) -> List[Dict[str, Any]]:
         try:
             self.connect()
@@ -131,6 +147,9 @@ class MobileGuestHandler:
         finally:
             self.disconnect()
 
+    # Добавляет в заказ блюда и/или напитки: берёт их цены из БД,
+    # вставляет строки в order_items и увеличивает total_price заказа
+    # на суммарную стоимость добавленного.
     def update_guest_order(self, order_id: int, dish_ids: List[int] = None,
                            bar_item_ids: List[int] = None) -> Dict[str, Any]:
         try:
@@ -187,6 +206,7 @@ class MobileGuestHandler:
         finally:
             self.disconnect()
 
+    # Возвращает все доступные блюда с названием категории
     def get_menu_dishes(self) -> List[Dict[str, Any]]:
         try:
             self.connect()
@@ -206,6 +226,7 @@ class MobileGuestHandler:
         finally:
             self.disconnect()
 
+    # Возвращает все доступные напитки бара
     def get_menu_drinks(self) -> List[Dict[str, Any]]:
         try:
             self.connect()
@@ -223,6 +244,7 @@ class MobileGuestHandler:
         finally:
             self.disconnect()
 
+    # Возвращает список категорий посещений (id, name)
     def get_visit_categories(self) -> List[Dict[str, Any]]:
         try:
             self.connect()
@@ -235,6 +257,8 @@ class MobileGuestHandler:
         finally:
             self.disconnect()
 
+    # Завершает сессию гостей за столом: переводит все «новые» заказы
+    # этого стола в статус «завершен»
     def complete_guest_session(self, table_number: int) -> Dict[str, Any]:
         try:
             self.connect()
@@ -262,9 +286,12 @@ class MobileGuestHandler:
             self.disconnect()
 
 
+# Готовый экземпляр обработчика для использования эндпоинтами
 guest_handler = MobileGuestHandler()
 
 
+# Регистрирует гостя по переданным данным. Если обработчик вернул success=False,
+# отдаёт 400 с сообщением из результата.
 @mobile_router.post("/guest/register", summary="Регистрация пользователя")
 async def register_guest(guest_data: GuestData):
     result = guest_handler.create_guest_user(
@@ -280,6 +307,7 @@ async def register_guest(guest_data: GuestData):
     return result
 
 
+# Возвращает гостей за указанным столом вместе с их количеством
 @mobile_router.get("/guest/table/{table_number}", summary="Получить инфо о гостях за столом")
 async def get_table_guests(table_number: int):
     guests = guest_handler.get_guest_by_table(table_number)
@@ -290,6 +318,7 @@ async def get_table_guests(table_number: int):
     }
 
 
+# Обновляет заказ гостя: добавляет блюда/напитки и пересчитывает сумму
 @mobile_router.post("/guest/order/update", summary="Обновить заказ гостя")
 async def update_guest_order(order_update: OrderUpdate):
     result = guest_handler.update_guest_order(
@@ -302,6 +331,7 @@ async def update_guest_order(order_update: OrderUpdate):
     return result
 
 
+# Возвращает доступные блюда для мобильного меню
 @mobile_router.get("/menu/dishes", summary="Получить доступные блюда для меню")
 async def get_menu_dishes():
     dishes = guest_handler.get_menu_dishes()
@@ -312,6 +342,7 @@ async def get_menu_dishes():
     }
 
 
+# Возвращает доступные напитки для мобильного меню
 @mobile_router.get("/menu/drinks", summary="Получить доступные напитки для меню")
 async def get_menu_drinks():
     drinks = guest_handler.get_menu_drinks()
@@ -322,6 +353,7 @@ async def get_menu_drinks():
     }
 
 
+# Возвращает полное меню: блюда + напитки и счётчики
 @mobile_router.get("/menu/all", summary="Получить всё меню")
 async def get_full_menu():
     dishes = guest_handler.get_menu_dishes()
@@ -336,6 +368,7 @@ async def get_full_menu():
     }
 
 
+# Завершает сессию гостей за столом (переводит «новые» заказы в «завершен»)
 @mobile_router.post("/guest/table/{table_number}/complete", summary="Закончить сессию гостей")
 async def complete_table_session(table_number: int):
     result = guest_handler.complete_guest_session(table_number)
@@ -344,6 +377,7 @@ async def complete_table_session(table_number: int):
     return result
 
 
+# Возвращает список категорий посещений
 @mobile_router.get("/categories", summary="Получить категории посещений")
 async def get_categories():
     categories = guest_handler.get_visit_categories()
