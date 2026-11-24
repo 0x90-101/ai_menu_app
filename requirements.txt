@@ -1,11 +1,22 @@
+# Веб-фреймворк для API
 fastapi==0.124.0
+# ASGI-сервер (стандартная сборка: uvloop, httptools и пр.)
 uvicorn[standard]==0.38.0
+# ORM и работа с БД (Core + Engine/Session)
 sqlalchemy==2.0.44
+# Валидация данных и модели запросов/ответов
 pydantic==2.12.5
+# Хеширование паролей (bcrypt и argon2)
 passlib[bcrypt,argon2]==1.7.4
+# Работа с JWT-токенами (encode/decode)
 PyJWT==2.9.0
+# Валидация email в pydantic (EmailStr)
 email-validator==2.3.0
+# Загрузка переменных окружения из .env
 python-dotenv==1.0.1
+# Драйвер PostgreSQL для SQLAlchemy
 psycopg==3.2.3
+# FAISS — библиотека для быстрого поиска по векторам (без версии — ставится последняя)
 faiss-cpu
+# Модели эмбеддингов (sentence-transformers) для векторного поиска
 sentence-transformers==3.0.1
