@@ -12,7 +12,7 @@ from sqlalchemy import text
 
 from database import db
 
-# Загружаем переменные окружения
+# Ищем .env (или env / env.example) и загружаем переменные окружения
 dotenv_path = (
         find_dotenv(usecwd=True)
         or find_dotenv("env", usecwd=True)
@@ -21,21 +21,27 @@ dotenv_path = (
 if dotenv_path:
     load_dotenv(dotenv_path)
 
+# Настройки JWT: секрет, алгоритм и время жизни токена (по умолчанию 30 минут)
 SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-change-me")
 ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
 
+# Контекст хеширования паролей: сначала argon2, bcrypt как запасной вариант
 pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
+# Схема OAuth2: токен берётся из заголовка Authorization, логин по /auth/login
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/auth/login")
 
+# Роутер для эндпоинтов аутентификации, префикс /auth
 auth_router = APIRouter(prefix="/auth", tags=["Аутентификация"])
 
 
+# Тело запроса на регистрацию: email, пароль и опциональная дата рождения
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
-    birth_date: Optional[str] = None  # Добавляем дату рождения (формат: YYYY-MM-DD)
+    birth_date: Optional[str] = None  # формат YYYY-MM-DD
 
+    # Валидатор пароля: минимум 6 символов
     @field_validator("password")
     @classmethod
     def validate_password(cls, v: str) -> str:
@@ -43,6 +49,7 @@ class RegisterRequest(BaseModel):
             raise ValueError("Пароль должен быть не менее 6 символов")
         return v
 
+    # Валидатор даты рождения: формат YYYY-MM-DD и возраст от 1 до 120 лет
     @field_validator("birth_date")
     @classmethod
     def validate_birth_date(cls, v: Optional[str]) -> Optional[str]:
@@ -63,28 +70,34 @@ class RegisterRequest(BaseModel):
             raise e
 
 
+# Тело запроса на вход: email и пароль
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
 
 
+# Универсальный ответ после регистрации/входа: флаг, данные пользователя и JWT-токен
 class AuthResponse(BaseModel):
     success: bool
     user_id: str
     email: EmailStr
-    birth_date: Optional[str] = None  # Добавляем дату рождения в ответ
+    birth_date: Optional[str] = None
     access_token: str
     token_type: str = "bearer"
 
 
+# Хеширует пароль через passlib (argon2/bcrypt)
 def _hash_password(password: str) -> str:
     return pwd_context.hash(password)
 
 
+# Проверяет, соответствует ли пароль сохранённому хешу
 def _verify_password(password: str, hashed: str) -> bool:
     return pwd_context.verify(password, hashed)
 
 
+# Создаёт JWT-токен из словаря data, добавляя срок истечения exp.
+# Если expires_delta не задан, токен живёт 15 минут.
 def _create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
     if expires_delta:
@@ -96,15 +109,16 @@ def _create_access_token(data: dict, expires_delta: Optional[timedelta] = None) 
     return encoded_jwt
 
 
+# Гарантирует существование таблицы users.
+# Если таблицы нет — создаёт её. Если есть, но нет колонки birth_date — добавляет её.
 def _ensure_users_table():
-    """Проверяет существование таблицы users и создаёт её при необходимости"""
     if db._table_exists("users"):
         # Проверяем наличие колонки birth_date
         try:
             with db.engine.connect() as conn:
                 conn.execute(text("SELECT birth_date FROM users LIMIT 1"))
         except Exception:
-            # Добавляем колонку birth_date если её нет
+            # Добавляем колонку birth_date, если её нет
             with db.engine.begin() as conn:
                 conn.execute(text("ALTER TABLE users ADD COLUMN birth_date DATE"))
         return
@@ -127,8 +141,9 @@ def _ensure_users_table():
         )
 
 
+# Ищет пользователя по email (в таблице поле называется login).
+# Возвращает словарь с полями или None, если пользователь не найден.
 def _get_user_by_email(email: str) -> Optional[Dict[str, str]]:
-    """Получает пользователя по email"""
     _ensure_users_table()
     with db.engine.connect() as conn:
         row = conn.execute(
@@ -138,8 +153,9 @@ def _get_user_by_email(email: str) -> Optional[Dict[str, str]]:
         return dict(row._mapping) if row else None
 
 
+# Вставляет нового пользователя в таблицу users и возвращает его данные,
+# включая сгенерированный id (lastrowid).
 def _create_user(email: str, password_hash: str, birth_date: Optional[str] = None) -> Dict[str, str]:
-    """Создаёт нового пользователя"""
     _ensure_users_table()
     with db.engine.begin() as conn:
         result = conn.execute(
@@ -155,6 +171,8 @@ def _create_user(email: str, password_hash: str, birth_date: Optional[str] = Non
     return {"id": user_id, "login": email, "password_hash": password_hash, "birth_date": birth_date}
 
 
+# Эндпоинт регистрации: проверяет, что email не занят, хеширует пароль,
+# создаёт пользователя и сразу выдаёт JWT-токен.
 @auth_router.post("/register", response_model=AuthResponse, summary="Регистрация")
 def register_user(payload: RegisterRequest):
     email = payload.email.lower()
@@ -185,6 +203,8 @@ def register_user(payload: RegisterRequest):
     )
 
 
+# Эндпоинт входа: находит пользователя по email, проверяет пароль
+# и при успехе выдаёт новый JWT-токен.
 @auth_router.post("/login", response_model=AuthResponse, summary="Вход")
 def login_user(payload: LoginRequest):
     email = payload.email.lower()
@@ -214,8 +234,10 @@ def login_user(payload: LoginRequest):
     )
 
 
+# Зависимость FastAPI: достаёт текущего пользователя по JWT из заголовка.
+# Декодирует токен, проверяет подпись/срок, ищет пользователя в БД.
+# Если что-то не так — 401.
 async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
-    """Получает текущего авторизованного пользователя по токену"""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Не удалось проверить учетные данные",
@@ -237,9 +259,9 @@ async def get_current_user(token: str = Depends(oauth2_scheme)) -> dict:
     return {"user_id": user_id, "email": email, "birth_date": user.get("birth_date")}
 
 
-# Дополнительная функция для получения возраста пользователя
+# Утилита: считает возраст по строке даты рождения (YYYY-MM-DD).
+# Учитывает, был ли уже день рождения в этом году. При ошибке парсинга — None.
 def get_user_age(birth_date_str: Optional[str]) -> Optional[int]:
-    """Рассчитывает возраст на основе даты рождения"""
     if not birth_date_str:
         return None
     try:
