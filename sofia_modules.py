@@ -7,33 +7,40 @@ from database import db
 from sqlalchemy import text
 
 
+# Тело запроса на создание заказа: кто, за каким столом, какие блюда
 class OrderCreate(BaseModel):
     user_id: int
     table_number: int
     dish_ids: List[int]
 
 
+# Тело запроса на оплату: id заказа и сумма
 class PaymentRequest(BaseModel):
     order_id: str
     amount: float
 
 
+# Тело запроса на отзыв: id заказа, оценка 1–5 и комментарий
 class ReviewCreate(BaseModel):
     order_id: str
     rating: int  # 1–5
     comment: Optional[str] = None
 
 
+# Тело запроса для QR (объявлено, но нигде не используется)
 class QRRequest(BaseModel):
     order_id: str
 
 
+# Роутеры по доменам: заказы, оплата, отзывы, кухня
 orders_router = APIRouter(prefix="/orders", tags=["Заказы"])
 payments_router = APIRouter(prefix="/payments", tags=["Оплата"])
 reviews_router = APIRouter(prefix="/reviews", tags=["Отзывы"])
 kitchen_router = APIRouter(prefix="/kitchen", tags=["Кухня"])
 
 
+# Проверяет существование таблицы по имени через SQLAlchemy inspector.
+# При любой ошибке возвращает False.
 def _table_exists(table_name: str) -> bool:
     try:
         inspector = db.engine
@@ -44,6 +51,7 @@ def _table_exists(table_name: str) -> bool:
         return False
 
 
+# Проверяет, есть ли колонка с заданным именем в таблице. При ошибке — False.
 def _column_exists(table_name: str, column_name: str) -> bool:
     try:
         from sqlalchemy import inspect
@@ -54,6 +62,8 @@ def _column_exists(table_name: str, column_name: str) -> bool:
         return False
 
 
+# Эндпоинт /orders/inventory/check: по списку id блюд (через запятую)
+# возвращает для каждого название и наличие. Если таблицы dishes нет — 500.
 @orders_router.get("/inventory/check", summary="Проверить наличие блюд")
 async def check_inventory(dish_ids: str):
     try:
@@ -87,6 +97,9 @@ async def check_inventory(dish_ids: str):
     return result
 
 
+# Эндпоинт /orders/: создаёт заказ.
+# Проверяет пользователя, наличие/доступность блюд, возраст для алкоголя,
+# считает итоговую сумму, вставляет запись в orders и позиции в order_items.
 @orders_router.post("/", summary="Создать заказ")
 async def create_order(order: OrderCreate):
     if not _table_exists('users'):
@@ -200,6 +213,8 @@ async def create_order(order: OrderCreate):
         }
 
 
+# Эндпоинт /orders/bar-menu: возвращает меню бара.
+# Если пользователь несовершеннолетний — отдаёт только безалкогольные позиции.
 @orders_router.get("/bar-menu", summary="Меню бара")
 async def bar_menu(user_id: int):
     if not _table_exists('bar_items'):
@@ -266,6 +281,8 @@ async def bar_menu(user_id: int):
         }
 
 
+# Эндпоинт /orders/{order_id}: возвращает заказ по id (числовому или строковому)
+# вместе со списком позиций (блюда + напитки) и итоговой суммой.
 @orders_router.get("/{order_id}", summary="Получить информацию о заказе")
 async def get_order(order_id: str):
     try:
@@ -360,6 +377,8 @@ async def get_order(order_id: str):
         return order_dict
 
 
+# Эндпоинт /kitchen/orders/new: возвращает новые заказы для кухни
+# (статусы «новый» и «В обработке») с логином пользователя и числом позиций.
 @kitchen_router.get("/orders/new", summary="Новые заказы для кухни")
 async def get_new_orders_for_kitchen():
     if not _table_exists('orders'):
@@ -408,6 +427,8 @@ async def get_new_orders_for_kitchen():
         }
 
 
+# Эндпоинт /kitchen/orders/{order_id}/accept: переводит заказ в статус
+# «Заказ принят». Если заказа нет или он уже принят — 400.
 @kitchen_router.post("/orders/{order_id}/accept", summary="Принять заказ на кухне")
 async def accept_order(order_id: str):
     try:
@@ -446,6 +467,8 @@ async def accept_order(order_id: str):
             raise HTTPException(400, "Заказ не найден или уже принят")
 
 
+# Эндпоинт /payments/qr/{order_id}: формирует ссылку/данные для оплаты заказа
+# (payment_url, сумму и текущий статус). Если заказ уже оплачен — 400.
 @payments_router.get("/qr/{order_id}", summary="Генерация QR-кода")
 async def get_payment_qr(order_id: str):
     try:
@@ -511,6 +534,9 @@ async def get_payment_qr(order_id: str):
         }
 
 
+# Эндпоинт /payments/pay: имитация оплаты.
+# Находит заказ, проверяет что не оплачен, сверяет сумму с total_price
+# (погрешность 0.01), переводит заказ в статус «Оплачен» и возвращает payment_id.
 @payments_router.post("/pay", summary="Оплатить заказ")
 async def pay(payment: PaymentRequest):
     try:
@@ -568,6 +594,9 @@ async def pay(payment: PaymentRequest):
         }
 
 
+# Эндпоинт /reviews/: добавляет отзыв к заказу.
+# Проверяет, что заказ существует и оплачен, что рейтинг в диапазоне 1–5,
+# и возвращает сгенерированный review_id (в БД отзыв при этом не пишется).
 @reviews_router.post("/", summary="Оставить отзыв")
 async def add_review(review: ReviewCreate):
     if not _table_exists('orders'):
