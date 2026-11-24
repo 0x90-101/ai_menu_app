@@ -9,7 +9,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
 class Database:
+    # Хеширует пароль: SHA-256 от "пароль+соль", возвращает строку "хеш:соль".
+    # Соль генерируется случайно, если не передана.
     @staticmethod
     def _hash_password(password: str, salt: str = None) -> str:
         if not password:
@@ -19,6 +22,8 @@ class Database:
         password_hash = hashlib.sha256(f"{password}{salt}".encode()).hexdigest()
         return f"{password_hash}:{salt}"
 
+    # Проверяет пароль: разбивает "хеш:соль", пересчитывает хеш и сравнивает.
+    # При любой ошибке (пустые данные, битый формат) возвращает False.
     @staticmethod
     def _verify_password(password: str, stored_hash: str) -> bool:
         if not password or not stored_hash:
@@ -30,12 +35,14 @@ class Database:
         except:
             return False
 
+    # Генерирует случайный пароль заданной длины из букв, цифр и спецсимволов.
     @staticmethod
     def _generate_password(length: int = 12) -> str:
         import string
         alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
         return ''.join(secrets.choice(alphabet) for _ in range(length))
 
+    # Проверяет «силу» пароля: минимум 8 символов, есть строчная, заглавная и цифра.
     @staticmethod
     def _check_password_strength(password: str) -> bool:
         if len(password) < 8:
@@ -45,6 +52,8 @@ class Database:
         has_digit = any(c.isdigit() for c in password)
         return has_lower and has_upper and has_digit
 
+    # Конструктор: читает DATABASE_URL, создаёт engine и фабрику сессий,
+    # сразу инициализирует подключение через _init_database().
     def __init__(self, db_path: str = None):
         self.database_url = os.getenv("DATABASE_URL")
         self.engine = None
@@ -52,6 +61,8 @@ class Database:
         self.metadata = MetaData()
         self._init_database()
 
+    # Создаёт engine: по DATABASE_URL, а если он не задан — SQLite-файл restaurant.db.
+    # Делает тестовый запрос SELECT 1, чтобы убедиться, что соединение живое.
     def _init_database(self):
         try:
             if self.database_url:
@@ -71,6 +82,7 @@ class Database:
         except Exception as e:
             raise
 
+    # Проверяет существование таблицы по имени. При ошибке — False.
     def _table_exists(self, table_name: str) -> bool:
         try:
             inspector = inspect(self.engine)
@@ -78,6 +90,7 @@ class Database:
         except:
             return False
 
+    # Проверяет, есть ли колонка с заданным именем в таблице.
     def _column_exists(self, table_name: str, column_name: str) -> bool:
         try:
             inspector = inspect(self.engine)
@@ -86,6 +99,7 @@ class Database:
         except:
             return False
 
+    # Возвращает список имён колонок таблицы. При ошибке — пустой список.
     def _get_table_columns(self, table_name: str) -> List[str]:
         try:
             inspector = inspect(self.engine)
@@ -94,6 +108,8 @@ class Database:
         except:
             return []
 
+    # Возвращает список админов (id, login, role) без паролей.
+    # Если таблицы нет — пустой список.
     def get_all_admin_users(self) -> List[Dict[str, Any]]:
         try:
             if not self._table_exists('admin_users'):
@@ -110,6 +126,9 @@ class Database:
         except Exception:
             return []
 
+    # Создаёт админа: при необходимости создаёт таблицу admin_users,
+    # проверяет уникальность логина, хеширует пароль и вставляет запись.
+    # Возвращает id, login, role созданного админа.
     def create_admin_user(self, admin_data: Dict[str, Any]) -> Dict[str, Any]:
         try:
             if not self._table_exists('admin_users'):
@@ -167,6 +186,9 @@ class Database:
             print(f"Ошибка: {e}")
             raise
 
+    # Обновляет админа по id: можно менять login, role и пароль.
+    # Пароль хешируется. Проверяет уникальность нового логина.
+    # Если данных для обновления нет — возвращает текущую запись.
     def update_admin_user(self, admin_id: int, admin_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
             if not self._table_exists('admin_users'):
@@ -240,6 +262,8 @@ class Database:
             traceback.print_exc()
             raise
 
+    # Удаляет админа по id. Запрещает удалять последнего админа (ValueError).
+    # Возвращает True, если строка удалена.
     def delete_admin_user(self, admin_id: int) -> bool:
         try:
             if not self._table_exists('admin_users'):
@@ -266,6 +290,8 @@ class Database:
             print(f"Ошибка удаления: {e}")
             return False
 
+    # Проверяет логин/пароль админа. Если всё ок — возвращает id, login, role
+    # (без password_hash), иначе None.
     def verify_admin_password(self, login: str, password: str) -> Optional[Dict[str, Any]]:
         try:
             if not self._table_exists('admin_users'):
@@ -287,6 +313,8 @@ class Database:
         except Exception:
             return None
 
+    # Меняет пароль админа: сначала проверяет старый, затем сохраняет хеш нового.
+    # Возвращает True при успехе.
     def change_admin_password(self, admin_id: int, old_password: str, new_password: str) -> bool:
         try:
             if not self._table_exists('admin_users'):
@@ -312,6 +340,7 @@ class Database:
         except Exception:
             return False
 
+    # Возвращает одного админа (id, login, role) по id или None.
     def get_admin_user_by_id(self, admin_id: int) -> Optional[Dict[str, Any]]:
         try:
             if not self._table_exists('admin_users'):
@@ -326,6 +355,7 @@ class Database:
         except Exception:
             return None
 
+    # Считает количество админов в таблице.
     def get_admin_users_count(self) -> int:
         try:
             if not self._table_exists('admin_users'):
@@ -336,6 +366,8 @@ class Database:
         except Exception:
             return 0
 
+    # Возвращает всех обычных пользователей. Набор колонок подбирается динамически:
+    # birth_date/diet_type/meal_style добавляются, только если они есть в таблице.
     def get_all_users(self) -> List[Dict[str, Any]]:
         try:
             if not self._table_exists('users'):
@@ -356,6 +388,8 @@ class Database:
             print(f"⚠️ Ошибка при получении пользователей: {e}")
             return []
 
+    # Возвращает одного пользователя по id (id, login и birth_date, если колонка есть).
+    # Если не найден — None.
     def get_user_by_id(self, user_id: int) -> Optional[Dict[str, Any]]:
         try:
             if not self._table_exists('users'):
@@ -372,6 +406,7 @@ class Database:
         except Exception:
             return None
 
+    # Удаляет пользователя по id. Возвращает True, если строка была удалена.
     def delete_user(self, user_id: int) -> bool:
         try:
             if not self._table_exists('users'):
@@ -387,6 +422,8 @@ class Database:
             print(f"Ошибка при удалении пользователя: {e}")
             return False
 
+    # Возвращает список блюд. Можно фильтровать по category_id (если колонка есть).
+    # Преобразует is_available в bool и подтягивает category_name по category_id.
     def get_all_dishes(self, category_id: Optional[int] = None, available_only: bool = False) -> List[Dict[str, Any]]:
         try:
             if not self._table_exists('dishes'):
@@ -412,6 +449,7 @@ class Database:
             print(f"Ошибка при получении блюд: {e}")
             return []
 
+    # Возвращает одно блюдо по id (с bool-флагом и category_name) или None.
     def get_dish_by_id(self, dish_id: int) -> Optional[Dict[str, Any]]:
         try:
             if not self._table_exists('dishes'):
@@ -434,6 +472,8 @@ class Database:
             print(f"Ошибка при получении блюда: {e}")
             return None
 
+    # Вспомогательный метод: возвращает имя категории по id.
+    # Работает с таблицей visit_categories.
     def _get_category_name(self, category_id: Optional[int]) -> Optional[str]:
         if not category_id or not self._table_exists('visit_categories'):
             return None
@@ -448,6 +488,8 @@ class Database:
         except:
             return None
 
+    # Создаёт блюдо. Фильтрует входные данные по реальным колонкам таблицы,
+    # приводит is_available к bool, возвращает созданную запись.
     def create_dish(self, dish_data: Dict[str, Any]) -> Dict[str, Any]:
         try:
             if 'is_available' in dish_data:
@@ -467,6 +509,9 @@ class Database:
             print(f"Ошибка при создании блюда: {e}")
             raise
 
+    # Обновляет блюдо по id: берёт только непустые поля из разрешённых колонок,
+    # приводит is_available к bool, возвращает обновлённую запись с category_name.
+    # Если обновлять нечего — возвращает текущую запись.
     def update_dish(self, dish_id: int, dish_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
             if not self._table_exists('dishes'):
@@ -497,6 +542,7 @@ class Database:
             print(f"Ошибка при обновлении блюда: {e}")
             raise
 
+    # Удаляет блюдо по id. Возвращает True, если строка была удалена.
     def delete_dish(self, dish_id: int) -> bool:
         try:
             if not self._table_exists('dishes'):
@@ -512,6 +558,7 @@ class Database:
             print(f"Ошибка при удалении блюда: {e}")
             return False
 
+    # Возвращает список категорий (id, name) из таблицы visit_categories.
     def get_all_categories(self) -> List[Dict[str, Any]]:
         try:
             if not self._table_exists('visit_categories'):
@@ -523,6 +570,7 @@ class Database:
             print(f"Ошибка при получении категорий: {e}")
             return []
 
+    # Возвращает все напитки бара. Флаги is_alcoholic и is_available приводятся к bool.
     def get_all_bar_items(self) -> List[Dict[str, Any]]:
         try:
             if not self._table_exists('bar_items'):
@@ -542,6 +590,7 @@ class Database:
             print(f"Ошибка при получении напитков: {e}")
             return []
 
+    # Возвращает один напиток по id (с bool-флагами) или None.
     def get_bar_item_by_id(self, item_id: int) -> Optional[Dict[str, Any]]:
         try:
             if not self._table_exists('bar_items'):
@@ -564,6 +613,7 @@ class Database:
             print(f"Ошибка при получении напитка: {e}")
             return None
 
+    # Создаёт напиток. Приводит bool-флаги, фильтрует по колонкам, возвращает запись.
     def create_bar_item(self, item_data: Dict[str, Any]) -> Dict[str, Any]:
         try:
             for flag in ('is_available', 'is_alcoholic'):
@@ -584,6 +634,8 @@ class Database:
             print(f"Ошибка при создании напитка: {e}")
             raise
 
+    # Обновляет напиток: bool-флаги, только непустые валидные поля.
+    # Возвращает обновлённую запись с bool-флагами или None.
     def update_bar_item(self, item_id: int, item_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
             if not self._table_exists('bar_items'):
@@ -617,6 +669,7 @@ class Database:
             print(f"Ошибка при обновлении напитка: {e}")
             raise
 
+    # Удаляет напиток по id. Возвращает True, если строка была удалена.
     def delete_bar_item(self, item_id: int) -> bool:
         try:
             if not self._table_exists('bar_items'):
@@ -632,6 +685,7 @@ class Database:
             print(f"Ошибка при удалении напитка: {e}")
             return False
 
+    # Возвращает все ингредиенты со склада, приводя current_stock и min_stock_level к float.
     def get_all_ingredients(self) -> List[Dict[str, Any]]:
         try:
             if not self._table_exists('ingredients'):
@@ -651,6 +705,8 @@ class Database:
             print(f"Ошибка при получении ингредиентов: {e}")
             return []
 
+    # Создаёт ингредиент. При необходимости создаёт таблицу ingredients.
+    # Числовые поля приводит к float, возвращает созданную запись.
     def create_ingredient(self, ingredient_data: Dict[str, Any]) -> Dict[str, Any]:
         try:
             if not self._table_exists('ingredients'):
@@ -686,6 +742,8 @@ class Database:
             print(f"Ошибка при создании ингредиента: {e}")
             raise
 
+    # Обновляет ингредиент: числовые поля к float, только непустые валидные колонки.
+    # Возвращает обновлённую запись (с float-полями) или None.
     def update_ingredient(self, ingredient_id: int, ingredient_data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
             if not self._table_exists('ingredients'):
@@ -719,6 +777,7 @@ class Database:
             print(f"Ошибка при обновлении ингредиента: {e}")
             raise
 
+    # Удаляет ингредиент по id. Возвращает True, если строка была удалена.
     def delete_ingredient(self, ingredient_id: int) -> bool:
         try:
             if not self._table_exists('ingredients'):
@@ -734,6 +793,7 @@ class Database:
             print(f"Ошибка при удалении ингредиента: {e}")
             return False
 
+    # Возвращает список всех таблиц в БД через SQLAlchemy inspector.
     def get_all_tables(self) -> List[str]:
         try:
             inspector = inspect(self.engine)
@@ -741,6 +801,7 @@ class Database:
         except:
             return []
 
+    # Считает количество строк в таблице users.
     def get_users_count(self) -> int:
         try:
             if not self._table_exists('users'):
@@ -751,6 +812,7 @@ class Database:
         except:
             return 0
 
+    # Считает количество строк в таблице dishes.
     def get_dishes_count(self) -> int:
         try:
             if not self._table_exists('dishes'):
@@ -761,6 +823,7 @@ class Database:
         except:
             return 0
 
+    # Считает количество строк в таблице bar_items.
     def get_bar_items_count(self) -> int:
         try:
             if not self._table_exists('bar_items'):
@@ -771,6 +834,9 @@ class Database:
         except:
             return 0
 
+
+# Создаёт пользователя в таблице users: при необходимости создаёт её,
+# вставляет login/пароль/дату рождения и возвращает id, login, birth_date.
 def create_user(self, user_data: Dict[str, Any]) -> Dict[str, Any]:
     """
     Создаёт нового пользователя с email, паролем и опциональной датой рождения
@@ -815,6 +881,8 @@ def create_user(self, user_data: Dict[str, Any]) -> Dict[str, Any]:
         raise
 
 
+# Ищет пользователя по email (по колонке login). Возвращает id, login,
+# password_hash, birth_date или None.
 def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
     """
     Получает пользователя по email (логину)
@@ -835,6 +903,7 @@ def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+# Обновляет дату рождения пользователя по id. Возвращает True при успехе.
 def update_user_birth_date(self, user_id: int, birth_date: str) -> bool:
     """
     Обновляет дату рождения пользователя
@@ -853,4 +922,6 @@ def update_user_birth_date(self, user_id: int, birth_date: str) -> bool:
         print(f"Ошибка при обновлении даты рождения: {e}")
         return False
 
+
+# Готовый экземпляр для использования в других модулях: from database import db
 db = Database()
