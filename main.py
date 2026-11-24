@@ -1,8 +1,8 @@
-# python main.py - для запуска локального сайта в терминале PyCharm или cmd
-# http://127.0.0.1:8000/docs - интерактивная документация
+# python main.py — для запуска локального сайта в терминале PyCharm или cmd
+# http://127.0.0.1:8000/docs — интерактивная документация
 # Ip и порт будет показан в терминале или cmd
 # . venv/Scripts/activate
-#	xtunnel http 8000
+# xtunnel http 8000
 
 # from gigachat import GigaChat
 import json
@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-import requests 
+import requests
 import urllib3
 import uvicorn
 from dotenv import find_dotenv, load_dotenv
@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy import text
 from starlette.middleware.cors import CORSMiddleware
 
+# Подключаем роутеры других модулей (админка, авторизация, меню, мобильное, заказы, оплата, отзывы, кухня)
 from admin import admin_router
 from auth import auth_router
 from database import db
@@ -31,8 +32,10 @@ from mobile import mobile_router
 from sofia_modules import orders_router, payments_router, reviews_router, kitchen_router
 from storage import *
 
+# Отключаем предупреждения о небезопасных HTTPS-запросах (нужно для GigaChat)
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# Ищем .env (или env / env.example) и загружаем переменные окружения
 dotenv_path = (
     find_dotenv(usecwd=True)
     or find_dotenv("env", usecwd=True)
@@ -47,23 +50,30 @@ else:
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Главный объект FastAPI — точка входа всего API
 app = FastAPI(
     title="Restaurant API",
     description="API for restaurant service",
 )
 
 from fastapi.responses import HTMLResponse
+
+# Отдаёт статический HTML-файл admin.html по адресу /admin.html
 @app.get("/admin.html")
 async def get_admin_html():
     with open("admin.html", "r", encoding="utf-8") as f:
         return HTMLResponse(content=f.read())
 
+
+# Клиент GigaChat: получает OAuth-токен и умеет отправлять сообщения в чат-модель.
 class GigaChatClient:
+    # Сохраняет credentials и сразу запрашивает access_token
     def __init__(self, credentials: str):
         self.credentials = credentials
         self.access_token = None
         self._get_token()
 
+    # Получает OAuth-токен у GigaChat по Basic-авторизации (credentials)
     def _get_token(self):
         url = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth"
         payload = {"scope": "GIGACHAT_API_PERS"}
@@ -76,6 +86,8 @@ class GigaChatClient:
         response.raise_for_status()
         self.access_token = response.json()["access_token"]
 
+    # Отправляет список сообщений в GigaChat и возвращает JSON-ответ.
+    # При 401 обновляет токен и повторяет запрос один раз.
     def send_message(self, messages: list):
         url = "https://gigachat.devices.sberbank.ru/api/v1/chat/completions"
         headers = {
@@ -95,8 +107,11 @@ class GigaChatClient:
         response.raise_for_status()
         return response.json()
 
+
+# Готовый экземпляр клиента GigaChat, создаётся при старте приложения
 GIGA_CLIENT = GigaChatClient(credentials=os.getenv("GIGACHAT_CREDENTIALS"))
 
+# Включаем CORS: разрешаем запросы с любых источников (для фронтенда и мобилок)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -104,6 +119,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Регистрируем все роутеры в приложении
 app.include_router(auth_router)
 app.include_router(admin_router)
 app.include_router(menu_router)
@@ -114,15 +131,19 @@ app.include_router(reviews_router)
 app.include_router(kitchen_router)
 
 
+# Модели данных для визита посетителя
 class VisitPurpose(BaseModel):
     purpose: str
+
 
 class TastePreferences(BaseModel):
     preferences: List[str]
 
+
 class DietaryRestrictions(BaseModel):
     restrictions: List[str]
     allergies: List[str]
+
 
 class VisitorData(BaseModel):
     table_number: int
@@ -132,26 +153,32 @@ class VisitorData(BaseModel):
     people_count: int
 
 
+# Тело запроса на рекомендации: теги, аллергии, ограничения
 class RecommendationRequest(BaseModel):
     tags: List[str] = Field(default_factory=list)
     allergies: List[str] = Field(default_factory=list)
     restrictions: List[str] = Field(default_factory=list)
 
 
+# Один элемент рекомендации: id, название, score в диапазоне 0..1
 class RecommendationItem(BaseModel):
     id: int
     name: str
     score: float = Field(ge=0, le=1)
 
 
+# Ответ рекомендаций: список элементов
 class RecommendationResponse(BaseModel):
     items: List[RecommendationItem]
 
 
+# Очищает список строк: убирает пустые значения и пробелы по краям
 def _normalize_list(values: List[str]) -> List[str]:
     return [v.strip() for v in values if v and v.strip()]
 
 
+# Достаёт из БД доступные блюда с учётом тегов, аллергий и ограничений.
+# Динамически подключает JOIN'ы на таблицы тегов и ингредиентов, если они есть.
 def fetch_relevant_dishes(tags: List[str], allergies: List[str], restrictions: List[str]) -> List[Dict[str, Any]]:
     if not db._table_exists('dishes'):
         return []
@@ -226,8 +253,8 @@ def fetch_relevant_dishes(tags: List[str], allergies: List[str], restrictions: L
             )
         return dishes
 
-# Сессии и заказы
 
+# Ещё одна пара моделей для рекомендаций (id может быть int или str)
 class RecommendationItem(BaseModel):
     id: int | str
     name: str
@@ -238,6 +265,8 @@ class RecommendationResponse(BaseModel):
     items: List[RecommendationItem]
 
 
+# Приводит score всех элементов к диапазону 0..1 (min-max нормализация),
+# сортирует по убыванию score и возвращает новый список.
 def _normalize_recommendation_items(items: List[RecommendationItem]) -> List[RecommendationItem]:
     if not items:
         return []
@@ -261,8 +290,9 @@ def _normalize_recommendation_items(items: List[RecommendationItem]) -> List[Rec
     normalized_items.sort(key=lambda x: x.score, reverse=True)
     return normalized_items
 
-# Сессии и заказы
 
+# Эндпоинт чата с GigaChat: строит контекст из похожих блюд,
+# отправляет запрос в модель и возвращает нормализованные рекомендации.
 @app.post("/gigachat/", response_model=RecommendationResponse)
 async def chat_with_gigachat(user_message: str):
     raw_payload = None
@@ -305,6 +335,8 @@ async def chat_with_gigachat(user_message: str):
         logger.exception("Unexpected GigaChat error")
         raise HTTPException(status_code=500, detail=f"GigaChat error: {str(e)}")
 
+
+# Начинает сессию для стола: ставит флаг в True
 @app.post("/startflag/{table_number}", tags=["Сессии"])
 def start_session(table_number: int):
     session_flags[table_number] = True
@@ -315,6 +347,8 @@ def start_session(table_number: int):
         "session_active": True
     }
 
+
+# Завершает сессию для стола: ставит флаг в False
 @app.post("/stopflag/{table_number}", tags=["Сессии"])
 def stop_session(table_number: int):
     session_flags[table_number] = False
@@ -325,6 +359,8 @@ def stop_session(table_number: int):
         "session_active": False
     }
 
+
+# Проверяет, активна ли сессия для указанного стола
 @app.get("/checkflag/{table_number}", tags=["Сессии"])
 def check_session(table_number: int):
     is_active = session_flags.get(table_number, False)
@@ -334,6 +370,9 @@ def check_session(table_number: int):
         "message": f"Сессия {'активна' if is_active else 'не активна'}"
     }
 
+
+# Принимает данные визита посетителя (цель визита, вкусы, аллергии, кол-во человек).
+# Работает только если сессия стола активна; сохраняет заявку в visitor_submissions.
 @app.post("/submit-visit-info", tags=["Клиент"])
 async def submit_visit_info(data: VisitorData):
     if not session_flags.get(data.table_number, False):
@@ -365,6 +404,8 @@ async def submit_visit_info(data: VisitorData):
     }
 
 
+# Собирает prompt для GigaChat: system-инструкцию и user-сообщение
+# со списком блюд и пожеланиями пользователя (теги, аллергии, ограничения).
 def build_recommendation_prompt(context_dishes: List[Dict[str, Any]], request: RecommendationRequest) -> Dict[str, Any]:
     system_prompt = (
         "Ты помощник ресторана. Выбирай только из предложенных блюд. "
@@ -391,6 +432,8 @@ def build_recommendation_prompt(context_dishes: List[Dict[str, Any]], request: R
     }
 
 
+# Парсит ответ LLM: вытаскивает JSON из текста (даже если вокруг есть мусор),
+# валидирует его через RecommendationResponse. При ошибке — 502.
 def parse_recommendation_response(raw_text: str) -> RecommendationResponse:
     try:
         match = re.search(r"\{.*\}", raw_text, re.DOTALL)
@@ -402,6 +445,8 @@ def parse_recommendation_response(raw_text: str) -> RecommendationResponse:
         raise HTTPException(status_code=502, detail=f"Invalid LLM response: {e}")
 
 
+# Эндпоинт рекомендаций: фильтрует блюда по тегам/аллергиям/ограничениям,
+# отправляет их в GigaChat и возвращает распарсенный ответ.
 @app.post("/recommendations", response_model=RecommendationResponse)
 async def get_recommendations(request: RecommendationRequest):
     tags = _normalize_list(request.tags)
@@ -428,10 +473,15 @@ async def get_recommendations(request: RecommendationRequest):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"GigaChat error: {str(e)}")
 
+
+# Простой health-check эндпоинт: возвращает {"message": "ok"}
 @app.post("/test-login")
 def test_login():
     return {"message": "ok"}
 
+
+# Точка входа при запуске `python main.py`:
+# читает APP_HOST/APP_PORT из окружения и поднимает uvicorn с автоперезагрузкой.
 if __name__ == "__main__":
     app_host = os.getenv("APP_HOST", "127.0.0.1")
     app_port = int(os.getenv("APP_PORT", "8000"))
