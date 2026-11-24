@@ -1,9 +1,10 @@
 -- SQLite версия базы данных для ресторана/кафе
--- ИСПРАВЛЕННАЯ ВЕРСИЯ - без синтаксических ошибок
 
+-- Включаем проверку внешних ключей (в SQLite по умолчанию выключена)
 PRAGMA foreign_keys = ON;
 
--- Таблица: admin_users
+
+-- Администраторы системы: логин, хеш пароля, роль (superuser/cook/waiter)
 CREATE TABLE admin_users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     login TEXT NOT NULL UNIQUE,
@@ -11,7 +12,7 @@ CREATE TABLE admin_users (
     role TEXT NOT NULL
 );
 
--- Таблица: bar_items
+-- Напитки бара: цена, алкогольный ли, крепость, доступность
 CREATE TABLE bar_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -22,7 +23,7 @@ CREATE TABLE bar_items (
     is_available BOOLEAN DEFAULT 1
 );
 
--- Таблица: ingredients
+-- Склад: ингредиенты с текущим остатком и минимальным уровнем для закупки
 CREATE TABLE ingredients (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -31,7 +32,7 @@ CREATE TABLE ingredients (
     min_stock_level REAL DEFAULT 0
 );
 
--- Таблица: bar_ingredients
+-- Связь напиток ↔ ингредиент: сколько ингредиента уходит на один напиток
 CREATE TABLE bar_ingredients (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     bar_item_id INTEGER,
@@ -41,13 +42,13 @@ CREATE TABLE bar_ingredients (
     FOREIGN KEY (ingredient_id) REFERENCES ingredients(id)
 );
 
--- Таблица: visit_categories
+-- Категории посещений (завтрак, обед, ужин и т.п.)
 CREATE TABLE visit_categories (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL
 );
 
--- Таблица: dishes
+-- Блюда меню: цена, категория, флаг доступности
 CREATE TABLE dishes (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -58,7 +59,7 @@ CREATE TABLE dishes (
     FOREIGN KEY (category_id) REFERENCES visit_categories(id)
 );
 
--- Таблица: dish_ingredients
+-- Связь блюдо ↔ ингредиент: состав блюда и расход на порцию
 CREATE TABLE dish_ingredients (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     dish_id INTEGER,
@@ -68,13 +69,13 @@ CREATE TABLE dish_ingredients (
     FOREIGN KEY (ingredient_id) REFERENCES ingredients(id)
 );
 
--- Таблица: dish_tags
+-- Справочник тегов блюд (веганское, острое и т.п.)
 CREATE TABLE dish_tags (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE
 );
 
--- Таблица: dish_tag_map
+-- Связь блюдо ↔ тег (многие-ко-многим)
 CREATE TABLE dish_tag_map (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     dish_id INTEGER,
@@ -83,7 +84,7 @@ CREATE TABLE dish_tag_map (
     FOREIGN KEY (tag_id) REFERENCES dish_tags(id)
 );
 
--- Таблица: users
+-- Пользователи (посетители и гости): логин, хеш пароля, дата рождения, диета, стиль питания
 CREATE TABLE users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     login TEXT UNIQUE,
@@ -93,7 +94,7 @@ CREATE TABLE users (
     meal_style TEXT
 );
 
--- Таблица: user_allergies
+-- Аллергии пользователя (многие-ко-многим через отдельные строки)
 CREATE TABLE user_allergies (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER,
@@ -101,7 +102,7 @@ CREATE TABLE user_allergies (
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
--- Таблица: user_preferences
+-- Предпочтения пользователя по тегам с весом (0..1)
 CREATE TABLE user_preferences (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER,
@@ -111,13 +112,13 @@ CREATE TABLE user_preferences (
     FOREIGN KEY (tag_id) REFERENCES dish_tags(id)
 );
 
--- Таблица: tables - создаем ПЕРЕД orders
+-- Столы в зале: номер стола уникален
 CREATE TABLE tables (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     table_number INTEGER NOT NULL UNIQUE
 );
 
--- Таблица: orders (теперь после tables)
+-- Заказы: кто, когда, статус, сумма, за каким столом
 CREATE TABLE orders (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER,
@@ -129,7 +130,7 @@ CREATE TABLE orders (
     FOREIGN KEY (table_number) REFERENCES tables(table_number)
 );
 
--- Таблица: order_items
+-- Позиции заказа: либо блюдо (dish_id), либо напиток (bar_item_id)
 CREATE TABLE order_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     order_id INTEGER,
@@ -140,7 +141,7 @@ CREATE TABLE order_items (
     FOREIGN KEY (bar_item_id) REFERENCES bar_items(id)
 );
 
--- Таблица: stock_log
+-- Журнал движения склада: сколько и почему изменился остаток ингредиента
 CREATE TABLE stock_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ingredient_id INTEGER,
@@ -152,7 +153,7 @@ CREATE TABLE stock_log (
     FOREIGN KEY (order_item_id) REFERENCES order_items(id)
 );
 
--- Таблица для отзывов (добавим для sofia_modules.py)
+-- Отзывы: оценка 1..5, комментарий, привязка к заказу и пользователю
 CREATE TABLE reviews (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     order_id INTEGER NOT NULL,
@@ -164,17 +165,19 @@ CREATE TABLE reviews (
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
 
--- Вставка данных
 
+-- Стартовые администраторы (логин/пароль/роль)
 INSERT INTO admin_users (id, login, password_hash, role) VALUES
 (1, 'Админ', '123', 'superuser'),
 (2, 'Повар', '123', 'cook');
 
+-- Стартовые напитки бара
 INSERT INTO bar_items (id, name, description, price, is_alcoholic, strength, is_available) VALUES
 (1, 'Эспрессо', 'Крепкий чёрный кофе', 120.00, 0, NULL, 1),
 (2, 'Мохито', 'Ром, мята, лайм', 350.00, 1, 12.50, 1),
 (3, 'Апельсиновый сок', 'Свежевыжатый', 200.00, 0, NULL, 1);
 
+-- Стартовые ингредиенты с остатками и минимумами
 INSERT INTO ingredients (id, name, unit, current_stock, min_stock_level) VALUES
 (1, 'Куриная грудка', 'г', 5000.000, 1000.000),
 (2, 'Лосось', 'г', 3000.000, 800.000),
@@ -187,6 +190,7 @@ INSERT INTO ingredients (id, name, unit, current_stock, min_stock_level) VALUES
 (9, 'Лайм', 'шт', 50.000, 10.000),
 (10, 'Апельсины', 'шт', 60.000, 10.000);
 
+-- Состав напитков (сколько ингредиента на порцию)
 INSERT INTO bar_ingredients (id, bar_item_id, ingredient_id, quantity) VALUES
 (6, 1, 6, 18.000),
 (7, 2, 7, 50.000),
@@ -194,6 +198,7 @@ INSERT INTO bar_ingredients (id, bar_item_id, ingredient_id, quantity) VALUES
 (9, 2, 9, 1.000),
 (10, 3, 10, 2.000);
 
+-- Категории посещений
 INSERT INTO visit_categories (id, name) VALUES
 (1, 'Завтрак'),
 (2, 'Обед'),
@@ -202,11 +207,13 @@ INSERT INTO visit_categories (id, name) VALUES
 (5, 'Выпить'),
 (6, 'Прочее');
 
+-- Стартовые блюда
 INSERT INTO dishes (id, name, description, price, category_id, is_available) VALUES
 (1, 'Салат Цезарь', 'Классический с курицей', 450.00, 2, 1),
 (2, 'Лосось на гриле', 'Лосось с лимонным соусом', 900.00, 3, 1),
 (3, 'Омлет', 'Яйца с сыром', 300.00, 1, 1);
 
+-- Состав блюд (расход ингредиентов на порцию)
 INSERT INTO dish_ingredients (id, dish_id, ingredient_id, quantity) VALUES
 (8, 1, 1, 120.000),
 (9, 1, 4, 40.000),
@@ -216,6 +223,7 @@ INSERT INTO dish_ingredients (id, dish_id, ingredient_id, quantity) VALUES
 (13, 3, 3, 3.000),
 (14, 3, 5, 15.000);
 
+-- Справочник тегов
 INSERT INTO dish_tags (id, name) VALUES
 (1, 'веганское'),
 (2, 'острое'),
@@ -223,27 +231,32 @@ INSERT INTO dish_tags (id, name) VALUES
 (4, 'низкоуглеводное'),
 (5, 'морепродукты');
 
+-- Привязка тегов к блюдам
 INSERT INTO dish_tag_map (id, dish_id, tag_id) VALUES
 (5, 1, 3),
 (6, 2, 5),
 (7, 2, 4),
 (8, 3, 3);
 
+-- Стартовые пользователи
 INSERT INTO users (id, login, password_hash, birth_date, diet_type, meal_style) VALUES
 (1, 'ivan', 'hash1', '1990-05-12', 'без ограничений', 'здоровый'),
 (2, 'maria', 'hash2', '1985-11-02', 'веган', 'здоровый'),
 (3, 'alex', 'hash3', '1998-01-22', 'Правильное питание', 'спортивный');
 
+-- Аллергии пользователей
 INSERT INTO user_allergies (id, user_id, allergen) VALUES
 (1, 1, 'арахис'),
 (2, 2, 'глютен'),
 (3, 3, 'лактоза');
 
+-- Предпочтения пользователей (тег + вес)
 INSERT INTO user_preferences (id, user_id, tag_id, weight) VALUES
 (1, 1, 3, 0.900),
 (2, 2, 1, 1.000),
 (3, 3, 4, 0.800);
 
+-- Столы в зале
 INSERT INTO tables (id, table_number) VALUES
 (1, 1),
 (2, 2),
@@ -251,15 +264,18 @@ INSERT INTO tables (id, table_number) VALUES
 (4, 4),
 (5, 5);
 
+-- Стартовые заказы
 INSERT INTO orders (id, user_id, created_at, status, total_price, table_number) VALUES
 (1, 1, '2025-12-07 01:23:27.982653', 'новый', 1350.00, 1),
 (2, 2, '2025-12-07 01:23:27.982653', 'выполнен', 450.00, 2);
 
+-- Позиции заказов (блюдо или напиток)
 INSERT INTO order_items (id, order_id, dish_id, bar_item_id) VALUES
 (1, 1, 2, NULL),
 (2, 1, NULL, 2),
 (3, 2, 1, NULL);
 
+-- Журнал списаний по заказам
 INSERT INTO stock_log (id, ingredient_id, change_amount, reason, created_at, order_item_id) VALUES
 (1, 2, -200.000, 'Списание по заказу', '2025-12-07 01:26:52.686032', 1),
 (2, 7, -50.000, 'Списание по заказу', '2025-12-07 01:26:52.686032', 2),
@@ -269,7 +285,8 @@ INSERT INTO stock_log (id, ingredient_id, change_amount, reason, created_at, ord
 (6, 4, -40.000, 'Списание по заказу', '2025-12-07 01:26:52.686032', 3),
 (7, 5, -20.000, 'Списание по заказу', '2025-12-07 01:26:52.686032', 3);
 
--- Индексы для улучшения производительности
+
+-- Индексы по внешним ключам и частым фильтрам — ускоряют JOIN'ы и выборки
 CREATE INDEX idx_bar_ingredients_bar_item_id ON bar_ingredients(bar_item_id);
 CREATE INDEX idx_bar_ingredients_ingredient_id ON bar_ingredients(ingredient_id);
 CREATE INDEX idx_dish_ingredients_dish_id ON dish_ingredients(dish_id);
